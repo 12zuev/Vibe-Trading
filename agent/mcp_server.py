@@ -40,6 +40,24 @@ AGENT_DIR = Path(__file__).resolve().parent
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
+# Load .env BEFORE building tool registry — some tools' check_available()
+# inspects env vars (e.g. alpaca_broker needs ALPACA_KEY/SECRET) and silently
+# excludes themselves when the var is missing. Mirrors the search order used
+# by src/providers/llm.py: ~/.vibe-trading/.env → AGENT_DIR/.env → CWD/.env.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+
+    for _candidate in (
+        Path.home() / ".vibe-trading" / ".env",
+        AGENT_DIR / ".env",
+        Path.cwd() / ".env",
+    ):
+        if _candidate.exists():
+            _load_dotenv(dotenv_path=_candidate, override=False)
+            break
+except ImportError:
+    pass
+
 from fastmcp import Context, FastMCP
 
 mcp = FastMCP("Vibe-Trading")
@@ -917,6 +935,162 @@ def scan_shadow_signals(
 
 # ---------------------------------------------------------------------------
 # Entry point
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Alpaca broker tools — paper/live execution with risk gate
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool
+def alpaca_account() -> str:
+    """Fetch Alpaca account snapshot (cash, equity, buying_power, status).
+
+    Reads ALPACA_BASE_URL (paper or live). Returns JSON with key fields and
+    the resolved mode ("paper"/"live").
+    """
+    registry = _get_registry()
+    return registry.execute("alpaca_account", {})
+
+
+@mcp.tool
+def alpaca_positions() -> str:
+    """List Alpaca open positions with qty, market value, unrealized P/L."""
+    registry = _get_registry()
+    return registry.execute("alpaca_positions", {})
+
+
+@mcp.tool
+def alpaca_orders(status: str = "all", limit: int = 20) -> str:
+    """List recent Alpaca orders.
+
+    Args:
+        status: "open" / "closed" / "all" (default "all").
+        limit: max rows (default 20, max 100).
+    """
+    registry = _get_registry()
+    return registry.execute("alpaca_orders", {"status": status, "limit": limit})
+
+
+@mcp.tool
+def alpaca_place_order(
+    symbol: str,
+    side: str,
+    notional: float = 0.0,
+    qty: float = 0.0,
+    type: str = "market",
+    limit_price: float = 0.0,
+    time_in_force: str = "day",
+    client_order_id: str = "",
+) -> str:
+    """Submit an Alpaca order through the risk gate.
+
+    Sacred constraints (enforced in code, not in prompt):
+      - ALPACA_READ_ONLY=1 → reject
+      - ALPACA_KILL_SWITCH=1 → reject
+      - Per-order cap (ALPACA_MAX_NOTIONAL_USD)
+      - Cash reserve (ALPACA_CASH_RESERVE_PCT of equity)
+      - Per-symbol cap (ALPACA_MAX_POSITION_PCT of equity)
+
+    Prefer ``notional`` (USD) over ``qty`` for fractional / crypto. Provide one.
+
+    Args:
+        symbol: Alpaca symbol (e.g. AAPL, BTC/USD).
+        side: "buy" or "sell".
+        notional: USD amount (preferred).
+        qty: Quantity in shares/units (alternative).
+        type: "market" (default) or "limit".
+        limit_price: Required when type="limit".
+        time_in_force: "day" / "gtc" / "ioc" (default "day").
+        client_order_id: Optional idempotency key.
+    """
+    registry = _get_registry()
+    params: dict[str, Any] = {
+        "symbol": symbol,
+        "side": side,
+        "type": type,
+        "time_in_force": time_in_force,
+    }
+    if notional and notional > 0:
+        params["notional"] = notional
+    if qty and qty > 0:
+        params["qty"] = qty
+    if limit_price and limit_price > 0:
+        params["limit_price"] = limit_price
+    if client_order_id:
+        params["client_order_id"] = client_order_id
+    return registry.execute("alpaca_place_order", params)
+
+
+@mcp.tool
+def alpaca_close_position(symbol: str) -> str:
+    """Flatten an open Alpaca position by symbol. Rejected when read_only/kill_switch on.
+
+    Args:
+        symbol: Symbol to close (e.g. AAPL).
+    """
+    registry = _get_registry()
+    return registry.execute("alpaca_close_position", {"symbol": symbol})
+
+
+# ---------------------------------------------------------------------------
+# CryptoБур signal pipe — publish research signals to execution layer
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool
+def cryptobur_publish_signal(
+    ticker: str,
+    direction: str,
+    horizon_hours: int,
+    thesis: str,
+    conviction: int = 0,
+    probability_up_horizon: float = 0.0,
+    risk_factors: list[str] | None = None,
+    ttl_hours: int = 1,
+    source_run_id: str = "",
+    source_preset: str = "",
+) -> str:
+    """Publish a Vibe-Trading research signal to CryptoБур's execution pipeline.
+
+    The signal becomes input to CryptoБур's conflict resolver — fused with the
+    user's native analyst output and routed through portfolio gate → broker.
+    Sacred role separation: signals are research, decisions are execution.
+
+    Args:
+        ticker: Ticker symbol (e.g. BTC-USD, AAPL).
+        direction: 'long' / 'short' / 'flat'.
+        horizon_hours: Horizon for the directional view (1..8760).
+        thesis: Short markdown explanation. Used by audit + UI.
+        conviction: 1-5 (setup strength). Pass 0 to omit.
+        probability_up_horizon: Calibrated P(up over horizon) in [0,1]. Pass 0 to omit.
+        risk_factors: Optional list of risk-factor strings.
+        ttl_hours: How long the signal stays usable for execution (1..24, default 1).
+        source_run_id: Optional swarm run id; auto-generated if empty.
+        source_preset: Optional preset that produced this signal.
+    """
+    registry = _get_registry()
+    params: dict[str, Any] = {
+        "ticker": ticker,
+        "direction": direction,
+        "horizon_hours": horizon_hours,
+        "thesis": thesis,
+        "ttl_hours": ttl_hours,
+    }
+    if conviction and conviction > 0:
+        params["conviction"] = conviction
+    if probability_up_horizon and probability_up_horizon > 0:
+        params["probability_up_horizon"] = probability_up_horizon
+    if risk_factors:
+        params["risk_factors"] = risk_factors
+    if source_run_id:
+        params["source_run_id"] = source_run_id
+    if source_preset:
+        params["source_preset"] = source_preset
+    return registry.execute("cryptobur_publish_signal", params)
+
+
 # ---------------------------------------------------------------------------
 
 

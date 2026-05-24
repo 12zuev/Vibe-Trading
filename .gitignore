@@ -7,6 +7,11 @@ __pycache__/
 .env
 agent/.env
 
+# Codex CLI runtime logs (local dev only)
+.codex-*.log
+.codex-*.err.log
+.codex-write-test
+
 .claude/*
 !.claude/hooks.json
 CLAUDE.md
