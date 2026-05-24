@@ -53,6 +53,27 @@ class SessionService:
         self._active_loops: Dict[str, "AgentLoop"] = {}
         self._search_index = get_shared_index()
 
+        # Architectural gap #6 (Codex audit): reconcile attempts left in
+        # RUNNING state by a previous host crash. Without this, attempts
+        # stuck mid-execution would never transition to a terminal status,
+        # and any UI polling on attempt.status would spin forever. Default
+        # threshold 30min — anything shorter risks reaping legitimate
+        # long-running attempts. Logged so operators see crash recovery.
+        try:
+            reaped = self.store.reconcile_stale_running()
+            if reaped > 0:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "SessionStore reconcile reaped %d stale RUNNING attempts on startup",
+                    reaped,
+                )
+        except Exception as _exc:
+            # Reconcile is best-effort — never block service startup on it.
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "SessionStore reconcile failed (continuing without): %s", _exc,
+            )
+
     def create_session(self, title: str = "", config: Optional[Dict[str, Any]] = None) -> Session:
         """Create a new session.
 

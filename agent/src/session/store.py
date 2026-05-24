@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.session.models import Attempt, Message, Session
+from src.session.models import Attempt, AttemptStatus, Message, Session
 
 # Architectural gap #4 (Codex audit): atomic write pattern ported from
 # SwarmStore (src/swarm/store.py). Plain path.write_text leaves a window
@@ -273,6 +273,94 @@ class SessionStore:
             self._attempt_file(attempt.session_id, attempt.attempt_id),
             attempt.to_dict(),
         )
+
+    def list_attempts(self, session_id: str) -> List[Attempt]:
+        """Return all attempts for a session in directory order.
+
+        Args:
+            session_id: Session ID.
+
+        Returns:
+            List of Attempt objects. Empty if the session has none.
+        """
+        attempts_root = self._session_dir(session_id) / "attempts"
+        if not attempts_root.exists():
+            return []
+        out: List[Attempt] = []
+        for child in attempts_root.iterdir():
+            if not child.is_dir():
+                continue
+            data = self._read_json(child / "attempt.json")
+            if data:
+                try:
+                    out.append(Attempt.from_dict(data))
+                except (KeyError, TypeError, ValueError):
+                    # Corrupt or schema-drifted attempt — skip rather than
+                    # crash the whole listing. Logged by caller if needed.
+                    continue
+        return out
+
+    def reconcile_stale_running(self, stale_threshold_seconds: int = 1800) -> int:
+        """Mark RUNNING attempts that have been silent too long as FAILED.
+
+        Architectural gap #6 (Codex audit): SessionService._run_attempt
+        runs in an asyncio task; if the host process dies between
+        mark_running() and mark_completed/mark_failed, the attempt stays
+        RUNNING forever in the filesystem. SwarmStore solves the same
+        class of bug via reconcile_run; this is the SessionStore equivalent.
+
+        Called from SessionService.__init__ — one-shot on boot. Future
+        improvement: heartbeat-based reaping like SwarmStore's reap_stale.
+
+        Args:
+            stale_threshold_seconds: How long a RUNNING attempt must be
+                silent before being reaped. Default 30 minutes — anything
+                shorter risks reaping legitimate long-running attempts.
+
+        Returns:
+            Number of attempts that were reaped.
+        """
+        from datetime import datetime as _dt
+
+        if not self.base_dir.exists():
+            return 0
+        now = _dt.now()
+        reaped = 0
+        for session_dir in self.base_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            attempts_root = session_dir / "attempts"
+            if not attempts_root.exists():
+                continue
+            for attempt_dir in attempts_root.iterdir():
+                if not attempt_dir.is_dir():
+                    continue
+                data = self._read_json(attempt_dir / "attempt.json")
+                if not data or data.get("status") != AttemptStatus.RUNNING.value:
+                    continue
+                created_iso = data.get("created_at")
+                if not created_iso:
+                    continue
+                try:
+                    created = _dt.fromisoformat(created_iso)
+                except ValueError:
+                    continue
+                age_s = (now - created).total_seconds()
+                if age_s < stale_threshold_seconds:
+                    continue
+                try:
+                    attempt = Attempt.from_dict(data)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                attempt.mark_failed(
+                    error=(
+                        f"reconciled on startup: attempt was RUNNING for "
+                        f"{int(age_s)}s without progress (likely host crash)"
+                    ),
+                )
+                self.update_attempt(attempt)
+                reaped += 1
+        return reaped
 
     # ---- IO Helpers ----
 
