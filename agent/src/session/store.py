@@ -3,10 +3,49 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.session.models import Attempt, Message, Session
+
+# Architectural gap #4 (Codex audit): atomic write pattern ported from
+# SwarmStore (src/swarm/store.py). Plain path.write_text leaves a window
+# where a reader sees a partially-written file, and concurrent writers from
+# MCP + API server can interleave. .tmp + os.replace gives POSIX atomic
+# rename; on Windows replace can race with a reader holding target open
+# (WinError 5/32) so we retry with backoff. POSIX path runs once.
+
+_TRANSIENT_WINERRORS = (5, 32)  # ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION
+_REPLACE_ATTEMPTS = 6
+_REPLACE_BACKOFF = (0.025, 0.05, 0.1, 0.2, 0.4)  # len == attempts - 1
+
+
+def _is_transient_windows_error(exc: OSError) -> bool:
+    return getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS
+
+
+def _replace_with_retry(tmp: Path, target: Path) -> None:
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp, target)
+            return
+        except OSError as exc:
+            if not _is_transient_windows_error(exc):
+                raise
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_BACKOFF[attempt])
+
+
+# Module-level lock — protects all SessionStore instances in this process
+# against concurrent _write_json calls (MCP server + API server share the
+# store). Cross-process safety still requires file-level locking; this is
+# necessary but not sufficient. The TODO is documented in the class
+# docstring rather than papered over.
+_WRITE_LOCK = threading.Lock()
 
 
 class SessionStore:
@@ -21,6 +60,17 @@ class SessionStore:
         │   └── attempts/
         │       └── {attempt_id}/
         │           └── attempt.json
+
+    Atomicity (architectural gap #4 from Codex audit):
+        - ``_write_json`` writes session.json / attempt.json via
+          tmp-file + ``os.replace`` under a module-level lock, so readers
+          never observe a partial file and intra-process writers do not
+          interleave bytes.
+        - ``append_message`` (jsonl) is also lock-guarded; one full JSON
+          line per write, with explicit fsync to flush before lock release.
+        - Cross-process safety still relies on the OS rename guarantees;
+          if multiple worker processes share the same base_dir, add file
+          locks (fcntl/portalocker) per session.
 
     Attributes:
         base_dir: Root directory for session storage.
@@ -143,8 +193,21 @@ class SessionStore:
         """
         path = self._messages_file(message.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(message.to_dict(), ensure_ascii=False) + "\n")
+        line = json.dumps(message.to_dict(), ensure_ascii=False) + "\n"
+        # Lock + fsync: prevents two writers from interleaving bytes inside
+        # a single line and guarantees the line hits disk before the lock
+        # releases so a reader that grabs the lock sees a complete entry.
+        with _WRITE_LOCK:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    # Some filesystems (tmpfs, some WSL bind mounts) reject
+                    # fsync — fall through; durability degrades to OS cache
+                    # but ordering is still preserved by the lock.
+                    pass
 
     def get_messages(self, session_id: str, limit: int = 100) -> List[Message]:
         """Read all messages for a session.
@@ -215,11 +278,15 @@ class SessionStore:
 
     @staticmethod
     def _write_json(path: Path, data: Dict[str, Any]) -> None:
+        # Atomic: write to .tmp then rename under the module-level lock.
+        # Readers either see the old file or the new file, never partial.
+        # See module docstring for cross-process caveats.
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        content = json.dumps(data, ensure_ascii=False, indent=2)
+        with _WRITE_LOCK:
+            tmp_path.write_text(content, encoding="utf-8")
+            _replace_with_retry(tmp_path, path)
 
     @staticmethod
     def _read_json(path: Path) -> Optional[Dict[str, Any]]:
