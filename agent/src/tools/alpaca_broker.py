@@ -459,10 +459,16 @@ class AlpacaPlaceOrderTool(_AlpacaToolBase):
             },
             "client_order_id": {
                 "type": "string",
-                "description": "Optional idempotency key.",
+                "description": (
+                    "REQUIRED idempotency key (1-128 chars). Wave 2 hardening: "
+                    "concurrent workers or automatic retries would otherwise "
+                    "submit structurally identical orders without a dedup "
+                    "key and produce duplicate fills before positions settle. "
+                    "Format suggestion: {strategy}-{symbol}-{epoch_ms}."
+                ),
             },
         },
-        "required": ["symbol", "side"],
+        "required": ["symbol", "side", "client_order_id"],
     }
     repeatable = True
 
@@ -476,6 +482,17 @@ class AlpacaPlaceOrderTool(_AlpacaToolBase):
         side = str(kwargs.get("side", "")).strip().lower()
         if not symbol or side not in {"buy", "sell"}:
             return _err("symbol and side='buy'|'sell' are required.")
+
+        # Wave 2 HIGH fix (fast path): client_order_id is REQUIRED for
+        # idempotent submission. Validate BEFORE any HTTP call so an
+        # invalid invocation never burns Alpaca rate budget. See full
+        # rationale at the body-construction site below.
+        client_order_id = str(kwargs.get("client_order_id", "")).strip()
+        if not client_order_id:
+            return _err(
+                "client_order_id is required for idempotent order submission. "
+                "Pass a unique key per intended order (e.g. {strategy}-{symbol}-{epoch_ms})."
+            )
 
         order_type = str(kwargs.get("type", "market")).strip().lower()
         if order_type not in {"market", "limit"}:
@@ -551,8 +568,9 @@ class AlpacaPlaceOrderTool(_AlpacaToolBase):
                 return _err("Estimated qty after limit_price is zero — increase notional or lower price.")
             body.pop("notional", None)
             body["qty"] = est_qty
-        if kwargs.get("client_order_id"):
-            body["client_order_id"] = str(kwargs["client_order_id"])[:128]
+        # Wave 2 HIGH fix: client_order_id was validated above at the top
+        # of execute() — pass it through here. Cap to Alpaca's 128-char limit.
+        body["client_order_id"] = client_order_id[:128]
 
         code, payload = _http_request("POST", "/v2/orders", cfg, body=body)
         if code not in (200, 201):

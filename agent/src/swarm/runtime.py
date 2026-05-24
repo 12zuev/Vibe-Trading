@@ -122,15 +122,23 @@ class SwarmRuntime:
             if live_callback is not None:
                 self._live_callbacks[run.id] = live_callback
 
+        # Wave 2 HIGH fix: previously the caller's `run` object was passed
+        # directly into the worker thread, then `_execute_run` mutated it
+        # in place (status, steps, timestamps). Any code reading the
+        # returned value after start_run() returned would see a partially-
+        # mutated snapshot — silent data race. Pass a deep copy into the
+        # thread so the caller's reference is stable, and return a fresh
+        # deep copy as the caller's read-only snapshot.
+        worker_run = run.model_copy(deep=True)
         thread = threading.Thread(
             target=self._execute_run,
-            args=(run, cancel_event, include_shell_tools),
+            args=(worker_run, cancel_event, include_shell_tools),
             name=f"swarm-{run.id}",
             daemon=True,
         )
         thread.start()
 
-        return run
+        return run.model_copy(deep=True)
 
     def cancel_run(self, run_id: str) -> bool:
         """Signal cancellation for a running swarm.
