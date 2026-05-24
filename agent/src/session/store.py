@@ -47,6 +47,13 @@ def _replace_with_retry(tmp: Path, target: Path) -> None:
 # docstring rather than papered over.
 _WRITE_LOCK = threading.Lock()
 
+# Module-level flag: ensure reconcile_stale_running fires at most once per
+# Python process even if SessionService is re-instantiated (test fixtures,
+# DI re-init). The state changes are idempotent (FAILED → FAILED is a no-op),
+# but the side-effects (logging, file-system traversal) are wasteful.
+_RECONCILE_DONE = False
+_RECONCILE_FLAG_LOCK = threading.Lock()
+
 
 class SessionStore:
     """Filesystem-backed persistent storage.
@@ -158,7 +165,11 @@ class SessionStore:
         if not session_dir.exists():
             return False
         import shutil
-        shutil.rmtree(session_dir, ignore_errors=True)
+        # Take the same lock used by _write_json so a concurrent writer
+        # cannot create files into a directory mid-delete (which races
+        # with rmtree on Windows and on some POSIX filesystems).
+        with _WRITE_LOCK:
+            shutil.rmtree(session_dir, ignore_errors=True)
         return True
 
     def list_sessions(self, limit: int = 50) -> List[Session]:
@@ -300,7 +311,12 @@ class SessionStore:
                     continue
         return out
 
-    def reconcile_stale_running(self, stale_threshold_seconds: int = 1800) -> int:
+    def reconcile_stale_running(
+        self,
+        stale_threshold_seconds: int = 1800,
+        *,
+        force: bool = False,
+    ) -> int:
         """Mark RUNNING attempts that have been silent too long as FAILED.
 
         Architectural gap #6 (Codex audit): SessionService._run_attempt
@@ -321,6 +337,14 @@ class SessionStore:
             Number of attempts that were reaped.
         """
         from datetime import datetime as _dt
+
+        # Process-level singleton guard — see _RECONCILE_DONE comment.
+        # `force=True` lets tests bypass it.
+        global _RECONCILE_DONE
+        with _RECONCILE_FLAG_LOCK:
+            if _RECONCILE_DONE and not force:
+                return 0
+            _RECONCILE_DONE = True
 
         if not self.base_dir.exists():
             return 0
