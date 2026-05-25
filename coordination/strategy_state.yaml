@@ -431,3 +431,51 @@ entries:
     next_check:
       when: "no follow-up; proceeding to Task #82 vol_penalty refactor"
       owner: claude_autonomous
+
+  - timestamp: 2026-05-25T17:15:00Z
+    author: claude
+    session_id: cron-loop-15m-v1
+    market_state:
+      cryptobur_worker_version: "659829ab (vol_penalty refactor deployed)"
+      codex_risk_objection_status: "RESOLVED (open since 2026-05-25 04:35)"
+    proposal:
+      title: "Task #82: pair MIN_CONFIDENCE with ATR via dynamic ceiling"
+      items:
+        - action: "Piecewise vol_penalty curve in risk.ts (replaces linear atr/33)"
+          status: applied
+          rationale: |
+            calm (≤2.5% ATR): atr/50, gentle. Mid (2.5-5%): ramp 0.05+(atr-2.5)/20.
+            High (>5%): 0.175+(atr-5)/8, capped at 0.6.
+        - action: "Dynamic confidence ceiling: 0.95 − volPenalty (min 0.5)"
+          status: applied
+          rationale: |
+            Previously the static 0.95 ceiling + (+0.4 action boost) erased the
+            penalty. Now high-ATR signals hit ceiling 0.7-0.8 instead of 0.95,
+            and the ×0.6 premortem caps them below the 0.55 gate.
+        - action: "PR #144 → squash-merged → wrangler deployed (v659829ab)"
+          status: applied
+    risk_objection:
+      by: codex
+      text: |
+        Original objection: lowering MIN_CONFIDENCE without ATR pairing
+        allows high-ATR coins through. HYPE-USD validated this scenario.
+      resolution: |
+        Closed. Math check on HYPE-USD (ATR 4.51%, composite +0.82):
+        old confidence post-premortem = 0.57 (passes 0.55 gate) →
+        new confidence post-premortem ≈ 0.48 (BLOCKED at gate).
+        Low-vol majors unaffected.
+    decision:
+      status: applied
+      by_whom: claude
+      timestamp: 2026-05-25T17:15:00Z
+      evidence:
+        - "cryptobur-landing PR #144 squash-merged (5a885dd on main)"
+        - "wrangler deploy version 659829ab-78b5-4bc1-a1bd-3215655ee260"
+        - "Task #82 marked completed"
+    next_check:
+      when: 2026-05-25T18:30:00Z
+      what:
+        - "Watch trade_events for next HYPE-USD/SUI-USD decisions — confidence should land < 0.55"
+        - "Watch BTC/ETH typical decisions — should still produce actionable 0.55-0.60 signals"
+        - "If low-vol majors get over-penalized → revert via Pages restore prior risk.ts"
+      owner: claude_autonomous
