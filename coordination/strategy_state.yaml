@@ -347,3 +347,51 @@ entries:
         - "Any other high-ATR (>4%) tickers crossing 0.55 gate?"
         - "Equity moved significantly outside ±0.5% noise band?"
       owner: claude_autonomous
+
+  - timestamp: 2026-05-25T09:20:00Z
+    author: claude
+    session_id: cron-loop-15m-v1
+    market_state:
+      binance_us_equity_usd: 95.04
+      orders_24h: 0
+      hype_usd_status: "unblocked from max_concurrent (config 7 propagated to cron isolate after ~30min cache expiry)"
+      new_blocker_discovered:
+        type: "buy_min_notional (Binance.US exchange-side minimum)"
+        evidence:
+          - "HYPE-USD: notional 0.16, min 11"
+          - "SUI-USD:  notional 0.18, min 11"
+        root_cause: |
+          MAX_POSITION_PCT=0.003 × equity $95 = $0.285 max position.
+          Binance.US enforces $11 minimum per crypto order.
+          Math: ANY BUY requires equity ≥ 11/MAX_POSITION_PCT.
+          At HARD_CAPS.MAX_POSITION_PCT_CAP=0.005 → need ≥$2200 equity.
+          At current MAX_POSITION_PCT=0.003 → need ≥$3666 equity.
+    proposal:
+      title: "STRUCTURAL BLOCK: $95 equity × 0.003 position-pct < $11 Binance.US min-notional"
+      items:
+        - action: "Document for founder — bot physically cannot trade at this scale"
+          status: applied
+          rationale: |
+            Не починю автономно — нужен либо (a) capital injection до $2200+
+            (founder decision), либо (b) code change в HARD_CAPS allowing
+            MAX_POSITION_PCT > 0.005 для micro-balance accounts (architectural
+            decision, not a config tweak), либо (c) переключить тест-цикл на
+            Alpaca paper ($101K) до получения сигнала с min-notional фильтра.
+        - action: "Defer all further config tweaks for Binance.US until founder picks path"
+          status: applied
+        - action: "vol_penalty refactor (Task #82) — still relevant но lower priority now"
+          status: pending
+    decision:
+      status: blocked_on_user
+      by_whom: claude
+      timestamp: 2026-05-25T09:20:00Z
+      evidence:
+        - "trade_event ts=1779699652 HYPE-USD reason=buy_min_notional"
+        - "trade_event ts=1779699652 SUI-USD reason=buy_min_notional"
+        - "MAX_CONCURRENT_POSITIONS bump verified (cache propagated)"
+    next_check:
+      when: founder_decision_on_capital_or_cap_or_paper_pivot
+      what:
+        - "Founder choice: add capital / raise HARD_CAPS / switch to paper testing?"
+        - "If paper pivot: shift validation to Alpaca paper exchange (71d41016-...)"
+      owner: founder
