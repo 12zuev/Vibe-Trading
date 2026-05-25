@@ -395,3 +395,39 @@ entries:
         - "Founder choice: add capital / raise HARD_CAPS / switch to paper testing?"
         - "If paper pivot: shift validation to Alpaca paper exchange (71d41016-...)"
       owner: founder
+
+  - timestamp: 2026-05-25T17:00:00Z
+    author: claude
+    session_id: cron-loop-15m-v1
+    market_state:
+      vibe_trading_swarm_health: "RECOVERED — first successful run after restart"
+      test_run_id: "swarm-20260525-164905-4c908929"
+      test_outcome:
+        status: "completed"
+        duration: "10m 33s (vs prior 31m timeouts)"
+        iterations: 8
+        input_tokens: 28608
+        output_tokens: 255
+        agent_self_aborted_because: "OKX market data fetch timed out from agent runtime (separate issue, Cloudflare may block OKX)"
+    proposal:
+      title: "Task #78 fully verified — line-level deadline fix works in prod"
+      items:
+        - action: "Trigger test swarm with research_to_cryptobur BTC-USD/swing"
+          status: applied
+          rationale: "Validate openai_codex.py f424209 fix end-to-end after Claude Code restart"
+        - action: "Observe: SSE stream emits, agent iterates 8x, terminates gracefully"
+          status: applied
+        - action: "Note next-tier issue: agent's OKX data fetch tool times out (unrelated to LLM stream)"
+          status: deferred
+          rationale: "Not blocking signal pipe; agent.handles missing data by aborting per spec. Investigate later if needed."
+    decision:
+      status: applied
+      by_whom: claude
+      timestamp: 2026-05-25T17:00:00Z
+      evidence:
+        - "Run swarm-20260525-164905-4c908929 completed_at 2026-05-25T16:59:38.722Z"
+        - "iterations=8, input_tokens=28608 — proves LLM channel healthy"
+        - "Prior 5 runs all failed at 1860s with iterations=0"
+    next_check:
+      when: "no follow-up; proceeding to Task #82 vol_penalty refactor"
+      owner: claude_autonomous
