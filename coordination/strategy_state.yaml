@@ -527,3 +527,39 @@ entries:
         - "If founder ack'd bump → apply 25→30 + watch FIL/other queued BUYs"
         - "Track orders_24h trend on Alpaca paper"
       owner: claude_autonomous
+
+  - timestamp: 2026-05-25T18:30:00Z
+    author: claude
+    session_id: cron-loop-15m-v2-alpaca
+    market_state:
+      new_mcp_tool: "meta.read_orientation deployed (Task #85)"
+    proposal:
+      title: "MCP orientation tool — instant session bootstrap"
+      items:
+        - action: "lib/operator/tools/orientation.ts — single tool, category meta, default-enabled"
+          status: applied
+          rationale: |
+            Replaces 10-20 discovery tool calls per new MCP session with one
+            structured snapshot: architecture, tunnel topology, Vibe-Trading
+            integration, operational state, key files, useful tool patterns,
+            live agent registry, live exchange list.
+        - action: "PR #145 squash-merged to main"
+          status: applied
+          commit: "Pages auto-deploy on main"
+        - action: "Tests: registry (21 pass) + tools-mcp (9 pass)"
+          status: applied
+    decision:
+      status: applied
+      by_whom: claude
+      timestamp: 2026-05-25T18:30:00Z
+      authority: "founder explicit 'давай делай'"
+      evidence:
+        - "cryptobur-landing PR #145 (8ae8519 → squash-merged)"
+        - "category=meta → default-on, no opt-in needed"
+        - "Tool ID: meta.read_orientation, MCP-exposed as mcp__cryptobur__meta_read_orientation"
+    next_check:
+      when: "5-10min after Cloudflare Pages propagation"
+      what:
+        - "Verify mcp__cryptobur__meta_read_orientation appears in tool list on next MCP reconnect"
+        - "Test call: should return architecture markdown + live agents/exchanges"
+      owner: claude_autonomous
