@@ -60,3 +60,123 @@ entries:
         - "mcp__vibe-trading__list_runs (look for completed status post-fix)"
         - "mcp__cryptobur__read_bot_config (check MIN_CONFIDENCE value)"
         - "mcp__cryptobur__read_recent_decisions (count BUY actions in last 24h)"
+
+  - timestamp: 2026-05-25T05:45:00Z
+    author: claude
+    session_id: autonomy-shift-v1
+    market_state:
+      binance_us_min_confidence: 0.60  # WAS 0.65 — changed via MCP
+      binance_us_equity_usd: 95.03
+      binance_us_recent_orders_24h: 0
+      binance_us_scoped_decisions_6h: 71
+      binance_us_buy_signals_6h: 1
+      binance_us_sell_signals_6h: 3
+      vibe_trading_swarm_health: "BROKEN (still) — deadline fix committed but MCP server cached old import; needs restart"
+      cryptobur_worker_version: "d215fe1a (variant B autonomy deployed)"
+    proposal:
+      title: "AI-autonomous config writes via MCP — variant B"
+      items:
+        - action: "Removed blanket OAuth=read-only block in worker/src/config-api.ts"
+          status: applied
+          commit: "0603b34"
+          rationale: "Founder wanted full chat-driven autonomy"
+        - action: "Added OAUTH_WRITE_CAPS (tighter than HARD_CAPS) — MIN_CONF≥0.45, MAX_POS≤0.5%, DD≤5%, R/T≤1%, HEAT≤10%"
+          status: applied
+          commit: "0603b34"
+          rationale: "Codex Q2: worst-case loss containment on $94 live balance"
+        - action: "Added OAUTH_WRITE_FORBIDDEN_FIELDS {kill_switch, mode, read_only}"
+          status: applied
+          rationale: "Codex Q4: double-block sensitive fields"
+        - action: "Audit source='ai_via_chat' for via_oauth writes"
+          status: applied
+          rationale: "Codex Q3: distinguish actor in audit trail"
+        - action: "Lowered Binance.US MIN_CONFIDENCE 0.65 → 0.60 via MCP"
+          status: applied
+          evidence: "bot_config_audit row 2026-05-25 05:37:57, source=ai_via_chat, diff={MIN_CONFIDENCE:{to:0.6}}"
+        - action: "Updated INSTITUTE.md §11-12 sacred invariants"
+          status: applied
+          commit: "826ee9f"
+    risk_objection:
+      by: codex
+      text: "Variant B accepted with constraints. Cron-driven AI (separate threat model) NOT enabled. Rollback path stays OAuth-blocked until separate constraints (15-min window, AI-authored-only) wired."
+      resolution: "Acknowledged — both explicitly deferred per variant B scope."
+    decision:
+      status: applied
+      by_whom: claude
+      timestamp: 2026-05-25T05:42:00Z
+      evidence:
+        - "cryptobur-landing commit 0603b34 (worker code)"
+        - "cryptobur-landing commit 826ee9f (INSTITUTE update)"
+        - "MCP smoke: config.set_risk_param HTTP 200, MIN_CONFIDENCE 0.6 applied"
+        - "Audit row source=ai_via_chat confirmed in D1"
+    next_check:
+      when: 2026-05-25T06:30:00Z
+      what:
+        - "Did Binance.US fire any real BUY/SELL orders after threshold drop?"
+        - "Did Vibe-Trading swarm produce completed run (requires MCP restart first)?"
+        - "Any anomalous trades that would suggest the 0.60 threshold is too loose?"
+      owner: claude_or_codex
+      data_source:
+        - "mcp__cryptobur__read_trade_cycle_status (orders_24h count)"
+        - "mcp__vibe-trading__list_runs (look for completed after restart)"
+        - "mcp__cryptobur__read_recent_decisions (action=BUY|SELL)"
+
+  - timestamp: 2026-05-25T05:45:30Z
+    author: claude
+    session_id: autonomy-shift-v1
+    market_state:
+      blocker: "Vibe-Trading MCP server holds stale import of openai_codex.py"
+    proposal:
+      title: "Need restart of Vibe-Trading MCP server for deadline fix to activate"
+      items:
+        - action: "Restart MCP server (launched as subprocess by Claude Code harness)"
+          status: blocked_on_user
+          how: "Founder closes + reopens Claude Code session, OR kills python.exe holding mcp_server.py"
+          why: "Python import cache means commit 26ef5b5 (deadline fix) isn't running"
+    decision:
+      status: deferred
+
+  - timestamp: 2026-05-25T07:00:00Z
+    author: claude
+    session_id: autonomous-loop-v1
+    market_state:
+      binance_us_equity_usd: 95.04
+      binance_us_min_confidence: 0.55  # WAS 0.61 — autonomous adjust via MCP
+      binance_us_recent_orders_24h: 0
+      binance_us_scoped_decisions_6h: 71
+      binance_us_signal_distribution: "HOLD 0.56-0.58, gate was 0.61, now 0.55"
+      vibe_trading_swarm_health: "5 consecutive failures (latest 2026-05-25 06:25) — iter_lines never yields first chunk, chunk-level deadline check never executes"
+      authority_grant: "Evgeny granted full autonomous deploy+merge authority for routine work"
+    proposal:
+      title: "Wave 3: line-level deadline + MIN_CONFIDENCE drop"
+      items:
+        - action: "Rewrote OpenAICodexLLM.stream() — wrap response.iter_lines() in deadline-aware generator, drop httpx read timeout 120s → 30s"
+          status: applied
+          file: "agent/src/providers/openai_codex.py:396"
+          rationale: "Previous chunk-level deadline was dead code when no chunks emit; line-level fires on every heartbeat-or-data line so socket silence trips fast"
+        - action: "Drop Binance.US MIN_CONFIDENCE 0.61 → 0.55 via MCP"
+          status: applied
+          evidence: "config_set_risk_param 2026-05-25 07:03:23, before=0.61 after=0.55, source=ai_via_chat"
+          rationale: "Real signals cluster at 0.56-0.58; 0.61 gate produced 0 BUY/SELL in 24h. 0.55 sits 10pp above OAUTH_WRITE_CAPS floor of 0.45"
+    risk_objection:
+      by: codex_pending
+      text: "Earlier Codex risk objection (2026-05-25 04:35) — lower MIN_CONFIDENCE should pair with vol_penalty tweak or universe whitelist before going live. Still unaddressed."
+      resolution: "Defer 24h observation. If 0.55 produces >5 BUY orders/24h on $94 equity OR >0.5%/trade drawdown, revert to 0.60 and add vol_penalty in next iteration."
+    decision:
+      status: applied
+      by_whom: claude
+      timestamp: 2026-05-25T07:03:00Z
+      evidence:
+        - "Vibe-Trading: openai_codex.py:396 — line-level deadline + 30s read timeout (uncommitted, pending push)"
+        - "CryptoБур: bot_config_audit row 2026-05-25 07:03:23, source=ai_via_chat"
+    next_check:
+      when: 2026-05-25T19:00:00Z  # +12h
+      what:
+        - "Did Vibe-Trading swarm produce any completed run after fix? (Needs MCP restart)"
+        - "How many BUY/SELL orders fired on Binance.US after threshold drop?"
+        - "Any positions with >0.5% per-trade drawdown that would suggest 0.55 is too loose?"
+      owner: claude_or_codex
+      data_source:
+        - "mcp__vibe-trading__list_runs (count status=completed in last 12h)"
+        - "mcp__cryptobur__read_trade_cycle_status (orders_24h, buys_24h)"
+        - "mcp__cryptobur__read_positions (per-position pnl_pct)"

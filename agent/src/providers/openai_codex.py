@@ -395,29 +395,41 @@ class OpenAICodexLLM:
 
     def stream(self, messages: list[dict[str, Any]], config: Optional[dict[str, Any]] = None) -> Iterable[CodexAIMessage]:
         timeout = (config or {}).get("timeout") or self.timeout
-        # 2026-05-25: hard wall-clock deadline around the SSE stream.
-        # httpx's `timeout` only applies per-chunk read, so a Codex server that
-        # trickles heartbeat events never trips it — observed in production
-        # 2026-05-24 where 3 consecutive `research_to_cryptobur` swarm runs
-        # hung with iterations=0 until the outer layer killed them at 1860s.
-        # Default deadline = 4× per-request timeout (so 480s for the default
-        # 120s timeout); caller can override via `config['deadline']`.
+        # 2026-05-25 v2: deadline check at the LINE level, not chunk level.
+        # Previous fix (chunk-level) never fired because the Codex server
+        # trickles SSE heartbeat lines that produce 0 chunks from the event
+        # filter — for-loop body never executes, deadline never checked.
+        # Observed 5 consecutive failures 2026-05-24/25 with iterations=0.
+        #
+        # Fix: wrap response.iter_lines() in a generator that ticks the
+        # deadline between each raw line, AND drop httpx's per-read timeout
+        # from the default 120s to 30s so socket-level hangs surface fast.
         import time
         deadline_s = float((config or {}).get("deadline") or (timeout * 4))
         start = time.monotonic()
-        with httpx.Client(timeout=timeout, follow_redirects=True, trust_env=True) as client:
+        # Tight per-read timeout: heartbeats arrive every few seconds, so 30s
+        # of silence is anomalous. Connect/write/pool keep the user-supplied
+        # value to avoid breaking slow tunnel handshakes.
+        read_timeout = min(30.0, float(timeout))
+        client_timeout = httpx.Timeout(connect=float(timeout), read=read_timeout, write=float(timeout), pool=float(timeout))
+
+        def _deadline_aware_lines(raw_lines: Iterable[str]) -> Iterable[str]:
+            for raw_line in raw_lines:
+                elapsed = time.monotonic() - start
+                if elapsed > deadline_s:
+                    raise RuntimeError(
+                        f"OpenAI Codex stream exceeded wall-clock deadline {deadline_s:.0f}s "
+                        f"(elapsed {elapsed:.0f}s, model={self.model}). "
+                        f"Caller should retry or fall back to another provider."
+                    )
+                yield raw_line
+
+        with httpx.Client(timeout=client_timeout, follow_redirects=True, trust_env=True) as client:
             with client.stream("POST", self.codex_url, headers=self._headers(), json=self._body(messages, stream=True)) as response:
                 if response.status_code != 200:
                     raw = response.read().decode("utf-8", "ignore")
                     raise RuntimeError(f"OpenAI Codex HTTP {response.status_code}: {raw[:500]}")
-                for chunk in _message_chunks_from_events(_events_from_lines(response.iter_lines())):
-                    elapsed = time.monotonic() - start
-                    if elapsed > deadline_s:
-                        raise RuntimeError(
-                            f"OpenAI Codex stream exceeded wall-clock deadline {deadline_s:.0f}s "
-                            f"(elapsed {elapsed:.0f}s, model={self.model}). "
-                            f"Caller should retry or fall back to another provider."
-                        )
+                for chunk in _message_chunks_from_events(_events_from_lines(_deadline_aware_lines(response.iter_lines()))):
                     yield chunk
 
     def invoke(self, messages: list[dict[str, Any]], config: Optional[dict[str, Any]] = None) -> CodexAIMessage:
