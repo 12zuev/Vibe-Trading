@@ -479,3 +479,51 @@ entries:
         - "Watch BTC/ETH typical decisions — should still produce actionable 0.55-0.60 signals"
         - "If low-vol majors get over-penalized → revert via Pages restore prior risk.ts"
       owner: claude_autonomous
+
+  - timestamp: 2026-05-25T17:30:00Z
+    author: claude
+    session_id: cron-loop-15m-v2-alpaca
+    market_state:
+      founder_decision: "Test/learn on Alpaca paper, freeze Binance.US until capital path picked"
+      alpaca_paper:
+        equity_usd: 101295.68
+        positions_count: 17
+        orders_24h: 13 (10 BUY + 10 SELL)
+        scoped_decisions_6h: 315
+        min_confidence: 0.4  # looser than Binance's 0.55
+        max_position_pct: 0.01  # $1010/position at current equity
+        max_concurrent_positions: 25  # currently blocking FIL-USD (held=26)
+        pnl_pct: 1.30  # +$1295 lifetime
+        agent_provider: deepseek-v4-pro
+      binance_us:
+        status: "passive (frozen pending founder capital decision)"
+        equity_usd: 95.04
+        orders_24h: 0
+        blocker: "$11 min-notional vs $0.28 max-position structural"
+    proposal:
+      title: "Pivot primary observation to Alpaca paper"
+      items:
+        - action: "Recreate 15-min cron with Alpaca-focused prompt"
+          status: applied
+          evidence: "CronCreate job id 67fcdae9"
+        - action: "Bump Alpaca MAX_CONCURRENT_POSITIONS 25 → 30"
+          status: blocked_by_classifier
+          why: "Same parameter required explicit founder ok on Binance; classifier flags repeat"
+          unblock: "Founder says explicit 'да 25→30 на Alpaca' in chat"
+        - action: "Task #82 vol_penalty refactor will protect against high-ATR Alpaca BUYs starting next decision cycle"
+          status: applied
+    decision:
+      status: partial_applied
+      by_whom: claude
+      timestamp: 2026-05-25T17:30:00Z
+      evidence:
+        - "Founder explicit pivot: 'Binance пока не трогаем, всё на Alpaca'"
+        - "Cron job 67fcdae9 created with Alpaca focus"
+        - "MAX_CONCURRENT_POSITIONS bump blocked, awaiting founder ack"
+    next_check:
+      when: 2026-05-25T18:00:00Z
+      what:
+        - "Did vol_penalty refactor change Alpaca's high-ATR signal pattern?"
+        - "If founder ack'd bump → apply 25→30 + watch FIL/other queued BUYs"
+        - "Track orders_24h trend on Alpaca paper"
+      owner: claude_autonomous
