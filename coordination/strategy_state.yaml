@@ -563,3 +563,52 @@ entries:
         - "Verify mcp__cryptobur__meta_read_orientation appears in tool list on next MCP reconnect"
         - "Test call: should return architecture markdown + live agents/exchanges"
       owner: claude_autonomous
+
+  - timestamp: 2026-05-25T19:00:00Z
+    author: claude
+    session_id: cron-loop-15m-v3-autoresearch
+    market_state:
+      protocol_shift: "Karpathy autoresearch pattern applied to trading"
+    proposal:
+      title: "Task #86: autoresearch protocol — let the agent learn to trade"
+      items:
+        - action: "Created cryptobur-landing/AUTORESEARCH.md (PR #146, squash-merged)"
+          status: applied
+          rationale: |
+            226-line program file. Defines metric (7d PnL Alpaca paper),
+            anti-metrics, knobs with safe ranges, 10-step experiment
+            protocol, simplicity criterion, NEVER STOP clause, research
+            mode for idle ticks, session bootstrap sequence.
+        - action: "Created Vibe-Trading/coordination/experiments.tsv"
+          status: applied
+          commit: "6b9f92d (evsavok)"
+          rationale: |
+            14-column TSV log: ts_started, ts_evaluated, exchange, knob,
+            before, after, commit_or_audit, pnl_7d_before/after,
+            orders_24h_before/after, status (running|keep|discard|crash),
+            hypothesis, notes. Seeded with today's 5 changes.
+        - action: "Updated cron job (be4888eb replaces 67fcdae9)"
+          status: applied
+          rationale: |
+            New cron prompt: bootstrap (orientation → AUTORESEARCH.md →
+            experiments.tsv) → check running experiment → keep/discard
+            OR propose new one → write to TSV → stop until next tick.
+            Research mode for genuinely tihie ticks (Codex proposals,
+            scorecard, decision patterns, Vibe runs).
+    decision:
+      status: applied
+      by_whom: claude
+      timestamp: 2026-05-25T19:00:00Z
+      authority: "founder explicit: 'нужно использовать его принцип чтобы всё правильно делалось'"
+      evidence:
+        - "cryptobur-landing PR #146 squash-merged"
+        - "Vibe-Trading commit 6b9f92d on evsavok fork"
+        - "Cron job be4888eb active (15-min cadence, Karpathy-style protocol)"
+    next_check:
+      when: "first cron tick at xx:07 — verify protocol execution"
+      what:
+        - "Did agent read AUTORESEARCH.md and experiments.tsv?"
+        - "Did it evaluate the vol_penalty 'running' experiment correctly?"
+        - "Or did it propose new experiment with hypothesis?"
+        - "TSV row appended?"
+      owner: claude_autonomous
