@@ -1,0 +1,62 @@
+# Shared trading-strategy ledger between Claude and Codex.
+# Append-only. New entries at the END. See README.md for schema.
+
+entries:
+
+  - timestamp: 2026-05-25T04:35:00Z
+    author: claude
+    session_id: bootstrap
+    market_state:
+      binance_us_exchange_id: "9b22f2cc-684b-4545-8fdb-a82216502750"
+      binance_us_equity_usd: 94.78
+      binance_us_mode: live
+      alpaca_paper_exchange_id: "71d41016-93f2-4332-b01c-81bdf0faa451"
+      alpaca_paper_equity_usd: 101295.13
+      alpaca_paper_mode: paper
+      schwab_exchange_id: "84e8346a-dff0-435a-8897-633eb8110628"
+      schwab_status: disabled
+      codex_tunnel: "https://codex-bridge.cryptobur.com (Named Tunnel via PM2 autostart)"
+      vibe_trading_swarm_health: "broken — last 3 research_to_cryptobur runs failed at 1860s deadline, 0 iterations"
+      cron_last_tick_age_min: 6
+      recent_decisions: "15/15 HOLD across both exchanges, confidence 0.55-0.60"
+    proposal:
+      title: "Bootstrap shared coordination ledger + 2 surgical fixes"
+      items:
+        - action: "Add wall-clock deadline to OpenAICodexLLM.stream() in Vibe-Trading"
+          file: "agent/src/providers/openai_codex.py:396"
+          status: applied
+          rationale: "research_to_cryptobur hangs forever on first stream because httpx timeout only applies per-chunk. New deadline = 4× per-request timeout (~480s default)"
+        - action: "Lower Binance.US MIN_CONFIDENCE 0.65 → 0.60"
+          status: blocked_403
+          blocker: "operator MCP needs explicit write-permission for config.set_risk_param"
+          unblock: "founder grants permission in /settings/operator → Permissions panel"
+          rationale: "post-premortem scores cluster at 0.55-0.60, 0.65 gate never opens"
+        - action: "Create coordination/ directory with shared state ledger"
+          status: applied
+          file: "coordination/README.md + strategy_state.yaml + open_questions.md"
+    risk_objection:
+      by: codex
+      text: |
+        Lowering MIN_CONFIDENCE without also tightening volatility/macro
+        filter could allow high-ATR coins through. Recommend pairing with
+        a vol_penalty threshold tweak or universe whitelist before going live.
+      resolution: "Deferred — first observe whether 0.60 gate produces sane signals over 24h, then iterate. ×0.60 premortem multiplier already does heavy lifting."
+    decision:
+      status: partial_applied
+      by_whom: claude
+      timestamp: 2026-05-25T04:35:00Z
+      evidence:
+        - "Vibe-Trading: agent/src/providers/openai_codex.py — deadline wrapper added (uncommitted)"
+        - "Vibe-Trading: coordination/ directory created (3 files)"
+        - "CryptoБур: MIN_CONFIDENCE change BLOCKED at policy layer (403)"
+    next_check:
+      when: 2026-05-25T16:00:00Z
+      what:
+        - "Did Vibe-Trading swarm produce new completed run after fix?"
+        - "Was MIN_CONFIDENCE permission granted by founder?"
+        - "Any new BUY orders on Binance.US after permission grant?"
+      owner: claude_or_codex
+      data_source:
+        - "mcp__vibe-trading__list_runs (look for completed status post-fix)"
+        - "mcp__cryptobur__read_bot_config (check MIN_CONFIDENCE value)"
+        - "mcp__cryptobur__read_recent_decisions (count BUY actions in last 24h)"

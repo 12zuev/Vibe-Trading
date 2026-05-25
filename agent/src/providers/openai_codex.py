@@ -395,12 +395,30 @@ class OpenAICodexLLM:
 
     def stream(self, messages: list[dict[str, Any]], config: Optional[dict[str, Any]] = None) -> Iterable[CodexAIMessage]:
         timeout = (config or {}).get("timeout") or self.timeout
+        # 2026-05-25: hard wall-clock deadline around the SSE stream.
+        # httpx's `timeout` only applies per-chunk read, so a Codex server that
+        # trickles heartbeat events never trips it — observed in production
+        # 2026-05-24 where 3 consecutive `research_to_cryptobur` swarm runs
+        # hung with iterations=0 until the outer layer killed them at 1860s.
+        # Default deadline = 4× per-request timeout (so 480s for the default
+        # 120s timeout); caller can override via `config['deadline']`.
+        import time
+        deadline_s = float((config or {}).get("deadline") or (timeout * 4))
+        start = time.monotonic()
         with httpx.Client(timeout=timeout, follow_redirects=True, trust_env=True) as client:
             with client.stream("POST", self.codex_url, headers=self._headers(), json=self._body(messages, stream=True)) as response:
                 if response.status_code != 200:
                     raw = response.read().decode("utf-8", "ignore")
                     raise RuntimeError(f"OpenAI Codex HTTP {response.status_code}: {raw[:500]}")
-                yield from _message_chunks_from_events(_events_from_lines(response.iter_lines()))
+                for chunk in _message_chunks_from_events(_events_from_lines(response.iter_lines())):
+                    elapsed = time.monotonic() - start
+                    if elapsed > deadline_s:
+                        raise RuntimeError(
+                            f"OpenAI Codex stream exceeded wall-clock deadline {deadline_s:.0f}s "
+                            f"(elapsed {elapsed:.0f}s, model={self.model}). "
+                            f"Caller should retry or fall back to another provider."
+                        )
+                    yield chunk
 
     def invoke(self, messages: list[dict[str, Any]], config: Optional[dict[str, Any]] = None) -> CodexAIMessage:
         accumulated: CodexAIMessage | None = None
