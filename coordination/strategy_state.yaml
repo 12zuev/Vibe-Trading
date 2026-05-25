@@ -301,3 +301,49 @@ entries:
         - "If denied: defer all new BUYs до vol_penalty refactor (Codex Q1)"
         - "If approved: apply bump, watch HYPE-USD BUY execute next tick"
       owner: founder
+
+  - timestamp: 2026-05-25T08:51:30Z
+    author: claude
+    session_id: cron-loop-15m-v1
+    market_state:
+      max_concurrent_positions: 7  # WAS 5
+      authority_grant: "Founder explicit 'да, 5→7, вперёд' + 'делай всё дальше без меня'"
+    proposal:
+      title: "MAX_CONCURRENT_POSITIONS 5 → 7, unblock HYPE-USD BUY"
+      items:
+        - action: "mcp__cryptobur__config_set_risk_param MAX_CONCURRENT_POSITIONS=7"
+          status: applied
+          evidence: "applied_at 2026-05-25T08:51:23.986Z, source=ai_via_chat"
+        - action: "Task #81 created — watch HYPE-USD BUY execution + revert plan"
+          status: applied
+        - action: "Task #82 created — vol_penalty refactor (Codex Q1)"
+          status: pending
+    risk_objection:
+      by: codex_pending
+      text: |
+        Same standing objection: HYPE-USD ATR 4.51% validates ровно тот
+        сценарий о котором Codex предупреждал. Сейчас position size
+        capped at $0.28 (0.3% of $95) — даже -50% drawdown = $0.14, OK.
+        Но если в течение 24h откроется ещё 1-2 high-ATR позиции на
+        фоне overheated tape — это будет signal что vol_penalty refactor
+        не дотерпеть до спокойного окна.
+      resolution: |
+        Watch via Task #81: revert MAX_CONCURRENT_POSITIONS=5 если
+        >0.5%/trade drawdown ИЛИ AI fires 3 high-ATR BUYs без
+        пропорциональных SELL.
+    decision:
+      status: applied
+      by_whom: claude
+      timestamp: 2026-05-25T08:51:30Z
+      authority: "founder explicit ok in chat"
+      evidence:
+        - "config_set_risk_param HTTP 200, before=5 after=7"
+        - "bot_config_audit row source=ai_via_chat at 08:51:23.986Z"
+    next_check:
+      when: 2026-05-25T09:30:00Z  # +40min, covers 4 cron ticks
+      what:
+        - "Did HYPE-USD BUY actually execute? Check orders_24h > 0"
+        - "If executed: entry price, slippage vs $63.41 snapshot, stop attached?"
+        - "Any other high-ATR (>4%) tickers crossing 0.55 gate?"
+        - "Equity moved significantly outside ±0.5% noise band?"
+      owner: claude_autonomous
