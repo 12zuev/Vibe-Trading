@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlparse
@@ -404,14 +405,19 @@ class OpenAICodexLLM:
         # Fix: wrap response.iter_lines() in a generator that ticks the
         # deadline between each raw line, AND drop httpx's per-read timeout
         # from the default 120s to 30s so socket-level hangs surface fast.
-        import time
+        #
+        # Round-2 (code review): tighten pool to 5s (acquiring a connection
+        # from the pool shouldn't take meaningful time with one client
+        # instance) and document the deadline ↔ read_timeout interaction:
+        # in the silent-socket case read_timeout (30s) fires first; in the
+        # heartbeats-but-no-chunks case (the original 5×failure mode)
+        # read_timeout keeps resetting on each heartbeat line so the
+        # wall-clock deadline_s is the actual rescue.
         deadline_s = float((config or {}).get("deadline") or (timeout * 4))
         start = time.monotonic()
-        # Tight per-read timeout: heartbeats arrive every few seconds, so 30s
-        # of silence is anomalous. Connect/write/pool keep the user-supplied
-        # value to avoid breaking slow tunnel handshakes.
         read_timeout = min(30.0, float(timeout))
-        client_timeout = httpx.Timeout(connect=float(timeout), read=read_timeout, write=float(timeout), pool=float(timeout))
+        pool_timeout = 5.0
+        client_timeout = httpx.Timeout(connect=float(timeout), read=read_timeout, write=float(timeout), pool=pool_timeout)
 
         def _deadline_aware_lines(raw_lines: Iterable[str]) -> Iterable[str]:
             for raw_line in raw_lines:
